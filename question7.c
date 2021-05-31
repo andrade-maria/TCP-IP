@@ -3,13 +3,14 @@
 #include <sys/types.h>				// size_t, pid_t
 #include <sys/socket.h>				// accept, bind, listen
 #include <netinet/in.h>				// sockaddr_in, htons
-#include <stdio.h>					// printf
+#include <stdio.h>				// printf
 #include <strings.h>				// bzero, strncmp
-#include <stdlib.h>					// exit
-#include <errno.h>					// strerror
-#include <fcntl.h>					// open files
-#include <string.h>					// string functions
-#include <unistd.h>					// fork()
+#include <stdlib.h>				// exit
+#include <errno.h>				// strerror
+#include <fcntl.h>				// open files
+#include <string.h>				// string functions
+#include <strings.h>				// string type
+#include <unistd.h>				// fork()
 #include <sys/wait.h>				// waitpid()	
 #include <stdbool.h>				// bool values
 
@@ -18,7 +19,7 @@
 // Prototypes, maybe outsource to webserver.h
 void handle_request( int s1 );
 int setup_webserver( void );
-void findExtension( char [], char **, char **);
+void findExtension( char [], char *, char *);
 int checkMIME( char []);
 bool openFile( int , int , char []);
 bool readFile( int , int ,int );
@@ -35,7 +36,8 @@ struct{
 	{"png","image/png"},
 	{"htm","text/htm"},
 	{"html","text/html"},
-	{"",""},
+	{"css","text/css"},
+	{" "," "},
 };
 
 
@@ -52,11 +54,12 @@ int main( void )
 		addrlen = sizeof( client_addr );
 		// wait for client requests
 		client_socket = accept( server_socket, (struct sockaddr*) &client_addr, &addrlen );
+		printf("Setup\n");
 		// process request
 		if(fork() == 0)
 		{			
 			printf( "Handling Client Request...\n");
-			handle_request( client_socket );	
+			handle_request( client_socket );
 		}
 
 		waitpid(-1, 0, WNOHANG);
@@ -65,33 +68,34 @@ int main( void )
 
 int setup_webserver( void )
 {
-	int s, ret;
-	struct sockaddr_in s_addr;								// create TCP/IP socket
+	
+	int s, ret;	
+	struct sockaddr_in s_addr;						// create TCP/IP socket
 	
 	s = socket( AF_INET, SOCK_STREAM, 0 );					// listen on port 80 (http) at localhost for client requests
-	bzero( &s_addr, sizeof( s_addr ) );						// clear data structure
+	bzero( &s_addr, sizeof( s_addr ) );					// clear data structure
 	
-	s_addr.sin_family = AF_INET;							// IP address
-	s_addr.sin_port = htons( 80 );							// port is 80
+	s_addr.sin_family = AF_INET;						// IP address
+	s_addr.sin_port = htons( 80 );						// port is 80
 	s_addr.sin_addr.s_addr = INADDR_ANY;					// addr. is 127.0.0.1
-															// bind port and addr. to socket
+										// bind port and addr. to socket
 	ret = bind( s, (struct sockaddr*) &s_addr, sizeof( s_addr ) );
 	
-	if( ret < 0 )											// error?
-	{														// Yes, convert into error message
+	if( ret < 0 )								// error?
+	{									// Yes, convert into error message
 		fprintf( stderr, "Bind Error: %s\n", strerror( errno ) );
-		exit( 1 );											// terminate program and return error code
+		exit( 1 );							// terminate program and return error code
 	}
-	listen( s, 5 );											// wait for requests, max. 5 requests in queue
-	return( s );											// return server socket descriptor
+	listen( s, 5 );								// wait for requests, max. 5 requests in queue
+	return( s );								// return server socket descriptor
 }
 
 // Entry: cs is client socket descriptor
 void handle_request( int cs )
 {
-	char request[BUFSIZE]; 									// buffer for first line of client request
+	char request[BUFSIZE]; 							// buffer for first line of client request
 	int i = 0;
-	char c;													// buffer for one input character
+	char c;									// buffer for one input character
 	char fileName[BUFSIZE];
 	char extensionName[BUFSIZE];				
 	
@@ -101,14 +105,15 @@ void handle_request( int cs )
 	while( read( cs, &c, 1 ) == 1 && c != '\n' && c != '\r' && i < sizeof( request ) -1 )
 		request[i++] = c;
 	
-	request[i] = '\0';										// terminate string
+	request[i] = '\0';							// terminate string
+	printf( "%s\n", request ); 						// print request
 	
 	// Check if it is a GET request
 	if(strncmp(request, "GET /", 5) == 0)					// request is a GET
 	{ 			
 		// Avoid relative path
-		if(strstr(request, "..") != NULL)					// request contains relative path
-		{													// this function returns a pointer to the first occurrence of str2 in str1
+		if(strstr(request, "..") != NULL)				// request contains relative path
+		{								// this function returns a pointer to the first occurrence of str2 in str1
 			perror( "Avoid relative path! Closing client socket..." );
 			close(cs);
 			return;
@@ -120,16 +125,18 @@ void handle_request( int cs )
 		
 		
 		// Find extension of request		
-		findExtension(request, &fileName, &extensionName);
+		findExtension(request, fileName, extensionName);
+		printf("Extension: %s\n",extensionName);
 		
 		// Check if the request contain an acceptable extension
 		int indexMime = checkMIME(extensionName);			// if not acceptable index = -1
+		printf("Index: %d\n",indexMime);
 		
 		// If acceptable file, open it
 		if (indexMime != -1){
 			printf("File: %s\nExt: %s\n", fileName, extensionName);	
 			bool success = openFile(cs, indexMime, fileName);
-				
+							
 			if(success)				
 				;
 			else
@@ -143,48 +150,61 @@ void handle_request( int cs )
 	else
 	{
 		perror( "Request Error\n It is not a GET request!");	
-		sendErrorPage(cs, 6);
+		sendErrorPage(cs, 7);						//indexMime = 6 is empty
 	}
 	
-	printf( "%s\n", request ); 						// print request
+	
 	close( cs );	
 }
 
-void findExtension(char request[], char* fileName[], char* extensionName[]){
+void findExtension(char request[], char* fileName, char* extensionName){
 	// GET FILENAME
 	int i;
-	for(i = 5; i < strlen(request); i++)
-		*fileName[i-5] = request[i];
-	*fileName[i-5] = '\0';
+	char fn[BUFSIZE];
+	
+	for(i = 5; i < strlen(request); i++){
+		if(request[i] == ' ')
+			break;
+		fn[i-5] = request[i];
+	}
+		
+	
+	strncpy(fileName, fn, strlen(fn));
+	fileName[strlen(fn)] = '\0';
+	
 	
 	//GET EXTENSION
 	int j = 0;
 	bool ext = false;
-	for(int i = 0; i < strlen(*fileName); i++){
+	char en[BUFSIZE];
+	for(i = 0; i < strlen(fileName); i++){
 		if (ext){
-			*extensionName[j] = *fileName[i];
+			if(fileName[i] == ' ')
+				break;
+			en[j] = fileName[i];
 			j++;
 		}
-		if(*fileName[i] == '.')
+		if(fileName[i] == '.')
 			ext = true;
 	}
-	*extensionName[j] = '\0';					// end of string
 	
-	printf("File: %s\nExt: %s", *fileName, *extensionName);
+	strncpy(extensionName, en, strlen(en));
+	extensionName[strlen(en)] = '\0';					// end of string
+	
 	return;
 }
 
 int checkMIME(char extensionName[]){
 	int index = -1;
-	for(int i = 0; i < 6; i++)
+	for(int i = 0; i <= 7; i++)
 		if(!strncmp(extensionName, acceptedMIMEs[i].extension, strlen(extensionName)))
 			index = i;
 	return index;
 }
 
 bool openFile(int cs, int indexMime, char file[]){
+	printf("Opening File\n");
 	int fileDescriptor;
-	char data[BUFSIZE];							// data from file
 	
 	// Open the file
 	fileDescriptor = open(file, O_RDONLY);
@@ -200,12 +220,13 @@ bool openFile(int cs, int indexMime, char file[]){
 }
 
 bool readFile(int cs, int indexMime,int fileDescriptor){
+	printf("Reading File\n");
 	struct stat fileStat;
-	char data[BUFSIZE];									// data from file
-	int n; 												// to read the file
+	char data[360000];							// data from file
+	int n; 									// to read the file
 	
 	fstat(fileDescriptor, &fileStat);					// get info from fileDesc. and put into struct
-	n = read(fileDescriptor, &data, sizeof(data));		//read the file
+	n = read(fileDescriptor, &data, sizeof(data));				//read the file
 	if(n != -1){
 		close(fileDescriptor);
 		return sendPage(cs, fileStat.st_size, indexMime, data);
@@ -218,18 +239,22 @@ bool readFile(int cs, int indexMime,int fileDescriptor){
 
 bool sendPage(int cs, int st_size, int indexMime, char data[])
 {
-	int n; 											// to write data
-	char fulldata[BUFSIZE];							// fulldata includes headers and html
-	char headers[BUFSIZE] = "HTTP/1.1 200 OK\r\nContent-length:";
+	printf("Sending Page\n");
+	int n; 									// to write data
+	char fulldata[360000];							// fulldata includes headers and html, which can be huge
+	char headers[360000] = "HTTP/1.1 200 OK\r\nContent-length:";
 					
 	sprintf(headers, "%s %ld\r\nContent-type: %s\r\n\r\n", headers,  
 		st_size, acceptedMIMEs[indexMime].fileType);
 	
-	snprintf(fulldata, sizeof(fulldata), "%s %s", headers,  data);
+	snprintf(fulldata, sizeof(fulldata), "%s\n%s", headers,  data);
+	printf("Headers: \n%s", headers);
+	printf("Data: \n%s", data);
 	
 	n = write(cs, fulldata, sizeof(fulldata));
+	
 	if(n != -1){
-		printf("Writting was successful");
+		printf("Writing was successful\n");
 		return true;
 	}
 	else{
@@ -238,10 +263,10 @@ bool sendPage(int cs, int st_size, int indexMime, char data[])
 	}
 }
 
-void sendErrorPage(int cs, int indexMime)
+void sendErrorPage(int cs, int index)
 {
 	char fileName[] = "errorPage.html";
-	bool success = openFile(cs, indexMime, fileName);
+	bool success = openFile(cs, index, fileName);
 	
 	if(success)
 		;
